@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   DESIGN TOKENS
+   --------------------------------------------------------------------------
+   One place for every colour, radius and shadow the product uses.
+
+   Why this exists: before this file the app mixed the `primary` token with raw
+   `emerald-*` / `teal-*` Tailwind classes, so "green" meant three different
+   values in three different places, and `--color-accent` was declared but never
+   used. Everything new must reference these semantic names, never a raw palette
+   value, so a brand change stays a one-line change.
+   ========================================================================== */
+@theme {
+  /* Brand. Deep trustworthy green/teal as the primary action colour. */
+  --color-primary: #0d7668; /* Deep trustworthy green/teal - WCAG AA compliant */
+  --color-primary-strong: #0a5a4f; /* Hover/active */
+  --color-primary-soft: #edf8f6; /* Tinted surfaces */
+  --color-primary-soft-strong: #c5e8e2; /* Tinted borders */
+
+  /* Warm accent. Used for attention and warmth, not primary actions. */
+  --color-accent: #c2410c; /* Warm coral/orange - AA compliant */
+  --color-accent-soft: #ffedd5;
+  --color-accent-strong: #9a3412;
+
+  /* Surfaces */
+  --color-surface: #ffffff;
+  --color-canvas: #fbfbf9; /* Warm off-white light neutral */
+  --color-canvas-subtle: #f3f3f0;
+  --color-line: #e3e3df;
+
+  /* Typography */
+  --color-ink: #0f172a;
+  --color-ink-muted: #475569;
+  --color-ink-subtle: #64748b;
+
+  /* Semantic status colours */
+  --color-info-soft: #e0f2fe;
+  --color-info-ink: #075985;
+  --color-warn-soft: #fef3c7;
+  --color-warn-ink: #92400e;
+  --color-good-soft: #dcfce7;
+  --color-good-ink: #166534;
+  --color-stop-soft: #ffe4e6;
+  --color-stop-ink: #9f1239;
+  --color-idle-soft: #f1f5f9;
+  --color-idle-ink: #334155;
+
+  --radius-card: 0.5rem; /* 8px - calm, restrained card radius */
+  --radius-control: 0.375rem; /* 6px - professional control radius */
+}
+
+/* ==========================================================================
+   BASE
+   ========================================================================== */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-canvas text-ink antialiased;
+    /* iOS Safari zooms any input under 16px on focus. 16px is the floor for
+       every form control in the system so that never happens. */
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply text-ink;
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  /* A single, consistent focus treatment. Never remove a focus ring without
+     replacing it — `outline: none` with no replacement is a WCAG 2.4.7 failure
+     and was a live bug in the staff queue. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-primary;
+  }
+
+  /* Sensible defaults for the native controls we do not restyle. */
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+  }
+
+  input[type='search']::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+  }
+
+  /* Respect the OS "reduce motion" setting. This product deliberately does not
+     animate, but a few browser defaults still slide. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* The one place a form control's shape is defined. */
+  .field-control {
+    @apply w-full rounded-control border border-line bg-surface px-3 py-2.5 text-base text-ink
+      placeholder:text-ink-subtle transition-colors
+      hover:border-slate-300
+      focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25
+      disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-ink-subtle;
+  }
+
+  .field-control-invalid {
+    @apply border-rose-400 focus:border-rose-500 focus:ring-rose-500/25;
+  }
+
+  /* Visible only to assistive technology. Used for labels and live regions. */
+  .sr-only-focusable {
+    @apply sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100]
+      focus:rounded-control focus:bg-surface focus:px-4 focus:py-2 focus:text-sm
+      focus:font-semibold focus:text-ink focus:shadow-lg;
+  }
+}
+
+/* ==========================================================================
+   UTILITIES
+   ========================================================================== */
+@utility container-page {
+  @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+}
+
+@utility container-narrow {
+  @apply mx-auto w-full max-w-3xl px-4 sm:px-6 lg:px-8;
+}
+
+@utility no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
