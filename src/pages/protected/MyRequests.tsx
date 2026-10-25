@@ -245,9 +245,9 @@ export default function MyRequests() {
             </div>
           </div>
         ) : (
-          /* Unified Professional Case List */
-          <section
-            className="rounded-card border border-line bg-surface divide-y divide-line overflow-hidden"
+          /* Professional Spaced Case List */
+          <div
+            className="space-y-4 sm:space-y-5"
             aria-label="Requests list"
           >
             {visible.map((request) => (
@@ -257,7 +257,7 @@ export default function MyRequests() {
                 categoryName={categoryName(request.categoryId)}
               />
             ))}
-          </section>
+          </div>
         )}
       </div>
     </div>

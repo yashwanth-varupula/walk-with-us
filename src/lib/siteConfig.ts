@@ -19,10 +19,13 @@
   │  deliberate reminder rather than a passing comment.                        │
   └──────────────────────────────────────────────────────────────────────────┘
 */
-export const CONTACT_EMAIL = 'hello@walkwithus.org';
+export const CONTACT_EMAIL = 'walkwithius19@gmail.com';
+export const CONTACT_PHONE = '7207024128';
+export const CONTACT_PHONE_DISPLAY = '+91 72070 24128';
+export const CONTACT_TAGLINE = 'Help Humanity Serve';
 
-/** True when CONTACT_EMAIL is still the unconfirmed placeholder. */
-export const CONTACT_EMAIL_IS_VERIFIED = false;
+/** True when CONTACT_EMAIL has been confirmed by the organisation. */
+export const CONTACT_EMAIL_IS_VERIFIED = true;
 
 /**
  * The active payment aggregator.

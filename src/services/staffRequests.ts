@@ -9,7 +9,11 @@ import {
   type RequestStatus,
   type UrgencyLevel,
 } from '../lib/status';
-import { REQUEST_IMAGES_BUCKET, getRequestCoverImageUrl } from './helpRequests';
+import {
+  REQUEST_IMAGES_BUCKET,
+  getRequestCoverImageUrl,
+  parseValidatedDocumentPath,
+} from './helpRequests';
 
 /**
  * Staff request-review service.
@@ -598,10 +602,23 @@ export async function createStaffDocumentUrl(
   storagePath: string,
   options: { download?: string } = {},
 ): Promise<StaffResult<{ signedUrl: string }>> {
-  if (!storagePath) {
+  const parsedPath = parseValidatedDocumentPath(storagePath);
+  if (!parsedPath) {
     return {
       data: null,
       error: { source: 'document-url', message: 'That document reference is not valid.' },
+    };
+  }
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError || !sessionData?.session?.user?.id) {
+    return {
+      data: null,
+      error: {
+        source: 'document-url',
+        message: 'You must be signed in to open this document.',
+        code: '28000',
+      },
     };
   }
 

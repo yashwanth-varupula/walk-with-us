@@ -14,6 +14,7 @@ import {
 import { LinkButton } from '../../components/ui/Button';
 import { EmptyState, ErrorState } from '../../components/ui/Card';
 import { ProgressBar } from '../../components/ui/ProgressBar';
+import { CategoryCoverPlaceholder } from '../../components/ui/CategoryPlaceholder';
 import { formatINR, fundingPercent } from '../../lib/format';
 import heroChildImg from '../../assets/hero-child.jpg';
 
@@ -60,7 +61,7 @@ function useIsMobile(breakpoint = 768) {
   });
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
     const mql = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
     const update = (e: MediaQueryListEvent | MediaQueryList) => {
       setIsMobile(e.matches);
@@ -366,17 +367,19 @@ export default function Home() {
                               loading="lazy"
                             />
                           ) : (
-                            <div className="flex h-full w-full flex-col items-center justify-center p-4 text-center bg-slate-100/80">
-                              <HeartHandshake className="h-8 w-8 text-primary/40 mb-1" aria-hidden="true" />
-                              <span className="text-[11px] font-medium uppercase tracking-wider text-ink-subtle">
-                                {cat || 'Community Support'}
-                              </span>
-                            </div>
+                            <CategoryCoverPlaceholder categoryName={cat} size="lg" />
                           )}
-                          <span className="absolute top-2.5 right-2.5 inline-flex items-center gap-1 font-medium text-emerald-800 text-[10px] bg-emerald-50/95 backdrop-blur-xs px-2 py-0.5 rounded-control border border-emerald-200 shadow-xs">
-                            <ShieldCheck className="h-3 w-3 text-emerald-600" aria-hidden="true" />
-                            Verified
-                          </span>
+                          <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 pointer-events-none">
+                            {req.isDemo && (
+                              <span className="inline-flex items-center font-medium text-slate-700 text-[10px] bg-white/95 backdrop-blur-xs px-2 py-0.5 rounded-control border border-slate-300 shadow-xs">
+                                Sample
+                              </span>
+                            )}
+                            <span className="inline-flex items-center gap-1 font-medium text-emerald-800 text-[10px] bg-emerald-50/95 backdrop-blur-xs px-2 py-0.5 rounded-control border border-emerald-200 shadow-xs">
+                              <ShieldCheck className="h-3 w-3 text-emerald-600" aria-hidden="true" />
+                              Verified
+                            </span>
+                          </div>
                         </div>
 
                         {/* Card Body */}

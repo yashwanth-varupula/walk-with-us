@@ -99,12 +99,21 @@ serve(async (req: Request) => {
         });
       }
 
+      if (donation.status === 'refunded') {
+        return new Response(JSON.stringify({ ok: true, notice: 'already_refunded' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       // Mark donation paid (atomic trigger increments help_requests.raised_amount)
+      // Supports late payment recovery from previously failed or cancelled status
       const { error: updateError } = await supabaseAdmin
         .from('donations')
         .update({
           status: 'paid',
           provider_payment_id: paymentId || donation.provider_payment_id,
+          failure_reason: null,
           paid_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
@@ -135,7 +144,7 @@ serve(async (req: Request) => {
             updated_at: new Date().toISOString(),
           })
           .eq('provider_order_id', orderId)
-          .eq('status', 'pending');
+          .in('status', ['pending', 'created']);
 
         if (updateError) {
           console.error('[razorpay-webhook] Failed to record payment failure:', updateError);

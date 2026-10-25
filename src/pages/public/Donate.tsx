@@ -23,6 +23,7 @@ import {
   validateDonationAmount,
   validateDonorDetails,
   verifyRazorpayPayment,
+  reconcileDonation,
 } from '../../services/donations';
 import { getPublicHelpRequestsPage, type PublicHelpRequest } from '../../services/helpRequests';
 import { formatINR, fundingPercent } from '../../lib/format';
@@ -171,6 +172,8 @@ export default function Donate() {
           ondismiss: () => {
             setBusy(false);
             setMessage('Payment was cancelled. No funds were charged.');
+            // Reconcile with Razorpay server-side to confirm cancellation and update DB
+            void reconcileDonation(donationId, { userAction: 'cancelled' });
           },
         },
         handler: async (response: {
@@ -205,7 +208,10 @@ export default function Donate() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       rzpInstance.on('payment.failed', (failResp: any) => {
         setBusy(false);
-        setMessage(failResp?.error?.description || 'Payment was declined or cancelled.');
+        const description = failResp?.error?.description || 'Payment was declined or cancelled.';
+        setMessage(description);
+        // Reconcile with Razorpay server-side to record verified failure
+        void reconcileDonation(donationId);
       });
       rzpInstance.open();
     } catch {

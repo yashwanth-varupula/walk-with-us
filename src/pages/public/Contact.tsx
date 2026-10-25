@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import Button, { LinkButton } from '../../components/ui/Button';
-import { CONTACT_EMAIL } from '../../lib/siteConfig';
+import { CONTACT_EMAIL, CONTACT_PHONE, CONTACT_PHONE_DISPLAY } from '../../lib/siteConfig';
 
 const TOPICS = [
   'I need help with a request',
@@ -107,6 +107,27 @@ export default function Contact() {
                   className="font-medium text-primary hover:underline text-sm break-all inline-block min-h-[44px] py-2"
                 >
                   {CONTACT_EMAIL}
+                </a>
+              </div>
+            </div>
+
+            {/* Direct Phone / Helpline Channel */}
+            <div className="border-t border-line pt-8 space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-primary">
+                Phone & Helpline
+              </h2>
+              <h3 className="font-serif text-lg font-bold text-ink">
+                Direct Contact & Support
+              </h3>
+              <p className="text-sm leading-relaxed text-ink-muted">
+                Speak directly with our team for questions, urgent verification coordination, or general enquiries.
+              </p>
+              <div className="pt-1">
+                <a
+                  href={`tel:${CONTACT_PHONE}`}
+                  className="font-medium text-primary hover:underline text-sm inline-block min-h-[44px] py-2"
+                >
+                  {CONTACT_PHONE_DISPLAY}
                 </a>
               </div>
             </div>

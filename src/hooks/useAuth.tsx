@@ -12,6 +12,14 @@ import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { isUserRole, type UserRole } from '../lib/roles';
 
+export interface SignUpResult {
+  sessionCreated: boolean;
+  userCreated?: boolean;
+  isExistingUser?: boolean;
+  requiresEmailConfirmation?: boolean;
+  user?: User | null;
+}
+
 interface AuthValue {
   session: Session | null;
   user: User | null;
@@ -22,15 +30,18 @@ interface AuthValue {
   roleError: string | null;
   signIn: (email: string, password: string) => Promise<void>;
   /**
-   * Returns whether a session was created.
+   * Returns whether a session was created and whether a new user account was registered.
    *
    * This matters because Supabase behaves differently depending on whether
    * email confirmation is switched on: with it on, signUp returns no session and
    * the user must click a link in their inbox; with it off, they are signed in
-   * immediately. The register form has to say the right thing in each case, and
-   * it cannot guess — so the SDK's actual answer is surfaced rather than assumed.
+   * immediately.
+   *
+   * Furthermore, when User Enumeration Protection is enabled in Supabase, duplicate
+   * signups return user with empty identities (`identities: []`). Surfacing `isExistingUser`
+   * and `userCreated` ensures the UI never falsely claims an account was created.
    */
-  signUp: (email: string, password: string, fullName: string) => Promise<{ sessionCreated: boolean }>;
+  signUp: (email: string, password: string, fullName: string) => Promise<SignUpResult>;
   signOut: () => Promise<void>;
 }
 
@@ -145,7 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string, fullName: string) => {
+  const signUp = useCallback(async (email: string, password: string, fullName: string): Promise<SignUpResult> => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -158,7 +169,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     });
     if (error) throw error;
-    return { sessionCreated: Boolean(data.session) };
+
+    const user = data.user ?? null;
+    const session = data.session ?? null;
+    const sessionCreated = Boolean(session);
+
+    // When User Enumeration Protection is enabled in Supabase, an existing registered user
+    // returns a user object with an empty identities array (identities: []).
+    // In this case, no new account was created.
+    const isExistingUser = Boolean(user && Array.isArray(user.identities) && user.identities.length === 0);
+    const userCreated = Boolean(user && !isExistingUser);
+
+    return {
+      sessionCreated,
+      userCreated,
+      isExistingUser,
+      requiresEmailConfirmation: userCreated && !sessionCreated,
+      user,
+    };
   }, []);
 
   const signOut = useCallback(async () => {

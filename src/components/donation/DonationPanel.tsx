@@ -17,6 +17,7 @@ import {
   isOnlineDonationEnabled,
   createDonationIntent,
   verifyRazorpayPayment,
+  reconcileDonation,
   validateDonorDetails,
   type DonorDetailsInput,
 } from '../../services/donations';
@@ -35,6 +36,7 @@ export interface DonationPanelProps {
   hasTarget?: boolean;
   className?: string;
   onShareClick?: () => void;
+  onDonationSuccess?: () => void;
 }
 
 type PaymentFlowState =
@@ -55,6 +57,7 @@ export function DonationPanel({
   hasTarget = true,
   className = '',
   onShareClick,
+  onDonationSuccess,
 }: DonationPanelProps) {
   const online = isOnlineDonationEnabled();
 
@@ -214,6 +217,8 @@ export function DonationPanel({
           ondismiss: () => {
             setFlowState('cancelled');
             setStatusMessage('Payment was cancelled before completion. No funds were charged.');
+            // Reconcile with Razorpay server-side to confirm cancellation and update DB
+            void reconcileDonation(donationId, { userAction: 'cancelled' });
           },
         },
         handler: async (response: {
@@ -237,6 +242,7 @@ export function DonationPanel({
             setVerifiedPaymentRef(response.razorpay_payment_id);
             setLastDonatedPaise(amountPaise);
             setStatusMessage(null);
+            onDonationSuccess?.();
           } else {
             setFlowState('failed');
             setStatusMessage(
@@ -252,9 +258,10 @@ export function DonationPanel({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       rzpInstance.on('payment.failed', (failResp: any) => {
         setFlowState('failed');
-        setStatusMessage(
-          failResp?.error?.description || 'Payment was declined or cancelled by the provider.',
-        );
+        const description = failResp?.error?.description || 'Payment was declined or cancelled by the provider.';
+        setStatusMessage(description);
+        // Reconcile with Razorpay server-side to record verified failure
+        void reconcileDonation(donationId);
       });
       rzpInstance.open();
     } catch (checkoutErr) {

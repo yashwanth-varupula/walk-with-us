@@ -13,7 +13,6 @@ export type PaymentStatus =
   | 'created'
   | 'pending'
   | 'paid'
-  | 'partially_refunded'
   | 'failed'
   | 'cancelled'
   | 'refunded';
@@ -30,8 +29,6 @@ export interface DonationRecord {
   isAnonymous: boolean;
   /** Integer minor units: 100 paise = ₹1.00 */
   amountPaise: number;
-  /** Integer minor units cumulative refund: 100 paise = ₹1.00 */
-  amountRefundedPaise?: number;
   currency: 'INR';
   paymentProvider: PaymentProvider;
   providerOrderId: string | null;
@@ -142,3 +139,73 @@ export type DonationIntentResult =
         | 'network_error';
       message: string;
     };
+
+/**
+ * Enhanced donation record with associated campaign summary information.
+ */
+export interface UserDonationRecord extends DonationRecord {
+  campaignTitle: string | null;
+  campaignCoverImageUrl: string | null;
+  campaignStatus: string | null;
+}
+
+/**
+ * Real database-derived statistics for the authenticated user.
+ */
+export interface DonationSummaryStats {
+  /** Sum of net successfully donated amount in paise (100 paise = ₹1) */
+  totalDonatedPaise: number;
+  /** Total count of successful (paid / partially refunded) donations */
+  successfulCount: number;
+  /** Count of distinct campaigns supported */
+  distinctCampaignsCount: number;
+  /** Total donated in the current calendar month in paise */
+  currentMonthDonatedPaise: number;
+  /** Total refunded amount in paise */
+  totalRefundedPaise: number;
+  /** Whether any refunds exist for the donor */
+  hasRefunds: boolean;
+}
+
+export type MyDonationsFilterStatus =
+  | 'all'
+  | 'paid'
+  | 'pending'
+  | 'failed'
+  | 'cancelled'
+  | 'refunded';
+
+export interface GetMyDonationsParams {
+  status?: MyDonationsFilterStatus;
+  searchQuery?: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface GetMyDonationsResponse {
+  donations: UserDonationRecord[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  stats: DonationSummaryStats;
+  error: string | null;
+}
+
+export interface DonationReceiptData {
+  receiptNumber: string;
+  donationId: string;
+  transactionReference: string;
+  paymentProvider: string;
+  amountPaise: number;
+  currency: 'INR';
+  status: PaymentStatus;
+  donationDate: string;
+  donorName: string;
+  isAnonymous: boolean;
+  campaignTitle: string;
+  campaignId: string | null;
+  isTaxDeductible: false;
+}

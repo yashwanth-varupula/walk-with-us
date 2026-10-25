@@ -5,6 +5,7 @@ import {
   ArrowRight,
   ChevronLeft,
   ChevronRight,
+  Heart,
   Inbox,
   MapPin,
   RefreshCw,
@@ -277,6 +278,20 @@ export default function StaffDashboard() {
               Synced {formatClock(updatedAt)}
             </span>
           )}
+          <Link
+            to="/staff/enquiries"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition-colors"
+          >
+            <Inbox className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+            <span>Enquiries</span>
+          </Link>
+          <Link
+            to="/staff/donations"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition-colors"
+          >
+            <Heart className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+            <span>Donations</span>
+          </Link>
           <button
             type="button"
             onClick={() => void loadData()}

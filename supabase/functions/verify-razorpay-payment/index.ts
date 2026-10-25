@@ -107,9 +107,22 @@ serve(async (req: Request) => {
     // 5. Query and Idempotently Update Database
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey);
 
+    // Optional user authentication resolution from JWT
+    let authenticatedUserId: string | null = null;
+    const authHeader = req.headers.get('Authorization');
+    if (authHeader) {
+      const token = authHeader.replace(/^Bearer\s+/i, '');
+      if (token) {
+        const { data: userData } = await supabaseAdmin.auth.getUser(token);
+        if (userData?.user?.id) {
+          authenticatedUserId = userData.user.id;
+        }
+      }
+    }
+
     const { data: donation, error: fetchError } = await supabaseAdmin
       .from('donations')
-      .select('id, status, provider_order_id, amount_paise, request_id')
+      .select('id, user_id, status, provider_order_id, amount_paise, request_id')
       .eq('id', donationId)
       .maybeSingle();
 
@@ -126,6 +139,12 @@ serve(async (req: Request) => {
 
     // Idempotency check: if already marked paid, return success without duplicating
     if (donation.status === 'paid') {
+      if (!donation.user_id && authenticatedUserId) {
+        await supabaseAdmin
+          .from('donations')
+          .update({ user_id: authenticatedUserId, updated_at: new Date().toISOString() })
+          .eq('id', donationId);
+      }
       return new Response(
         JSON.stringify({
           ok: true,
@@ -150,15 +169,22 @@ serve(async (req: Request) => {
     }
 
     // 6. Mark donation paid (triggers atomic funding update via database trigger)
+    const updatePayload: Record<string, unknown> = {
+      status: 'paid',
+      provider_payment_id: razorpay_payment_id,
+      provider_signature: razorpay_signature,
+      failure_reason: null,
+      paid_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (!donation.user_id && authenticatedUserId) {
+      updatePayload.user_id = authenticatedUserId;
+    }
+
     const { error: updateError } = await supabaseAdmin
       .from('donations')
-      .update({
-        status: 'paid',
-        provider_payment_id: razorpay_payment_id,
-        provider_signature: razorpay_signature,
-        paid_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', donationId);
 
     if (updateError) {

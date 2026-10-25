@@ -4,6 +4,7 @@ import MainLayout from './components/layout/MainLayout';
 import Home from './pages/public/Home';
 import ProtectedRoute from './components/ProtectedRoute';
 import StaffRoute from './components/StaffRoute';
+import AdminRoute from './components/AdminRoute';
 import StaffLayout from './pages/staff/StaffLayout';
 import { LinkButton } from './components/ui/Button';
 
@@ -25,6 +26,8 @@ const Help = lazy(() => import('./pages/public/Help'));
 const HelpDetails = lazy(() => import('./pages/public/HelpDetails'));
 const Login = lazy(() => import('./pages/public/Login'));
 const Register = lazy(() => import('./pages/public/Register'));
+const ForgotPassword = lazy(() => import('./pages/public/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/public/ResetPassword'));
 const NotFound = lazy(() => import('./pages/public/NotFound'));
 const About = lazy(() => import('./pages/public/About'));
 const Impact = lazy(() => import('./pages/public/Impact'));
@@ -33,10 +36,15 @@ const Donate = lazy(() => import('./pages/public/Donate'));
 const Volunteer = lazy(() => import('./pages/public/Volunteer'));
 const Partner = lazy(() => import('./pages/public/Partner'));
 const MyRequests = lazy(() => import('./pages/protected/MyRequests'));
+const MyDonations = lazy(() => import('./pages/protected/MyDonations'));
+const Profile = lazy(() => import('./pages/protected/Profile'));
 const UserRequestDetail = lazy(() => import('./pages/protected/UserRequestDetail'));
 const StaffDashboard = lazy(() => import('./pages/staff/StaffDashboard'));
 const StaffQueue = lazy(() => import('./pages/staff/StaffQueue'));
 const StaffRequestReview = lazy(() => import('./pages/staff/StaffRequestReview'));
+const StaffEnquiryInbox = lazy(() => import('./pages/staff/StaffEnquiryInbox'));
+const StaffDonations = lazy(() => import('./pages/staff/StaffDonations'));
+const AdminUserManagement = lazy(() => import('./pages/staff/AdminUserManagement'));
 
 /**
  * Placeholder shown while a route chunk is in flight.
@@ -206,6 +214,26 @@ function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="my-donations"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<RouteFallback />}>
+                <MyDonations />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="profile"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<RouteFallback />}>
+                <Profile />
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
         <Route path="request/staff" element={<Navigate to="/staff" replace />} />
         {/* Old requester detail URL. Redirects so shared links keep working. */}
         <Route path="request/:id" element={<LegacyRequesterDetailRedirect />} />
@@ -248,6 +276,22 @@ function App() {
           element={
             <Suspense fallback={<RouteFallback />}>
               <Register />
+            </Suspense>
+          }
+        />
+        <Route
+          path="forgot-password"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <ForgotPassword />
+            </Suspense>
+          }
+        />
+        <Route
+          path="reset-password"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <ResetPassword />
             </Suspense>
           }
         />
@@ -298,6 +342,32 @@ function App() {
             <Suspense fallback={<RouteFallback />}>
               <StaffRequestReview />
             </Suspense>
+          }
+        />
+        <Route
+          path="enquiries"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <StaffEnquiryInbox />
+            </Suspense>
+          }
+        />
+        <Route
+          path="donations"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <StaffDonations />
+            </Suspense>
+          }
+        />
+        <Route
+          path="users"
+          element={
+            <AdminRoute>
+              <Suspense fallback={<RouteFallback />}>
+                <AdminUserManagement />
+              </Suspense>
+            </AdminRoute>
           }
         />
         {/* Anything else under /staff renders a real 404 inside the console

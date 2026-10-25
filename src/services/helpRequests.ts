@@ -93,8 +93,12 @@ export function getRequestCoverImageUrl(imagePath?: string | null): string | nul
   if (/^https?:\/\//i.test(trimmed)) {
     return trimmed;
   }
-  const { data } = supabase.storage.from(REQUEST_IMAGES_BUCKET).getPublicUrl(trimmed);
-  return data?.publicUrl ?? null;
+  try {
+    const { data } = supabase.storage?.from(REQUEST_IMAGES_BUCKET)?.getPublicUrl(trimmed) ?? {};
+    return data?.publicUrl ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export interface PublicHelpRequest {
@@ -112,6 +116,7 @@ export interface PublicHelpRequest {
   createdAt: string | null;
   imagePath: string | null;
   imageUrl: string | null;
+  isDemo?: boolean;
 }
 
 export interface PublicHelpRequestDetail extends PublicHelpRequest {
@@ -132,7 +137,7 @@ export interface PublicQueryResult<T> {
  */
 const PUBLIC_COLUMNS =
   'id, title, description, status, urgency, category_id, target_amount, raised_amount, ' +
-  'location_city, location_state, published_at, created_at, image_path';
+  'location_city, location_state, published_at, created_at, image_path, is_demo';
 
 function toPublicRequest(row: Record<string, unknown>): PublicHelpRequest {
   const imagePath = (row.image_path as string | null) ?? null;
@@ -151,6 +156,7 @@ function toPublicRequest(row: Record<string, unknown>): PublicHelpRequest {
     createdAt: (row.created_at as string | null) ?? null,
     imagePath,
     imageUrl: getRequestCoverImageUrl(imagePath),
+    isDemo: Boolean(row.is_demo),
   };
 }
 
@@ -808,16 +814,58 @@ function errorFields(err: unknown): {
   };
 }
 
+const SAFE_STORAGE_ID_SEGMENT = /^[a-zA-Z0-9_-]+$/;
+const SAFE_STORAGE_FILENAME = /^[a-zA-Z0-9._-]+$/;
+
+const CANONICAL_MIME_BY_DOC_TYPE: Record<DocumentType, (typeof ALLOWED_DOCUMENT_MIME_TYPES)[number]> = {
+  pdf: 'application/pdf',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+};
+
+/**
+ * Validates and decomposes a private document storage path of the canonical form:
+ * `{userId}/{requestId}/{uuid}-{sanitizedFilename}`.
+ * Rejects empty segments, path traversal (`..`), backslashes, and extra folder levels.
+ */
+export function parseValidatedDocumentPath(
+  storagePath: string,
+): { userId: string; requestId: string; fileName: string } | null {
+  if (!storagePath || typeof storagePath !== 'string') return null;
+  if (storagePath.includes('\\') || storagePath.includes('..')) return null;
+
+  const segments = storagePath.split('/');
+  if (segments.length !== 3) return null;
+
+  const [userId, requestId, fileName] = segments;
+  if (!SAFE_STORAGE_ID_SEGMENT.test(userId) || !SAFE_STORAGE_ID_SEGMENT.test(requestId)) {
+    return null;
+  }
+  if (!fileName || !SAFE_STORAGE_FILENAME.test(fileName) || fileName.startsWith('.')) {
+    return null;
+  }
+
+  return { userId, requestId, fileName };
+}
+
 /**
  * Client-side validation for a document file. Returns a human-readable problem
  * string when the file is not acceptable, or null when it can be uploaded.
  */
 export function validateDocumentFile(file: File): string | null {
-  const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+  const dotIndex = file.name.lastIndexOf('.');
+  const ext = dotIndex >= 0 ? file.name.slice(dotIndex).toLowerCase() : '';
+  const mime = file.type.toLowerCase();
   const typeAllowed =
-    file.type === '' || (ALLOWED_DOCUMENT_MIME_TYPES as readonly string[]).includes(file.type);
+    mime === '' ||
+    mime === 'image/jpg' ||
+    (ALLOWED_DOCUMENT_MIME_TYPES as readonly string[]).includes(mime);
   const extAllowed = (ALLOWED_DOCUMENT_EXTENSIONS as readonly string[]).includes(ext);
   if (!typeAllowed || !extAllowed) {
+    return 'Only PDF, JPG, or PNG files are allowed.';
+  }
+  // Second gate: ensure extension and MIME type agree and resolve to a valid DocumentType.
+  if (!resolveDocumentType(file)) {
     return 'Only PDF, JPG, or PNG files are allowed.';
   }
   if (file.size <= 0) {
@@ -826,17 +874,13 @@ export function validateDocumentFile(file: File): string | null {
   if (file.size > MAX_DOCUMENT_BYTES) {
     return 'This file is larger than the 5 MB limit. Please choose a smaller file.';
   }
-  // Second gate: never let an unresolvable file reach the NOT NULL column.
-  if (!resolveDocumentType(file)) {
-    return 'The file type could not be determined. Please choose a PDF, JPG, or PNG file.';
-  }
   return null;
 }
 
 /**
  * Derives `document_type` from the actual uploaded file, never from a
  * hard-coded constant. Returns one of DOCUMENT_TYPES, or null when the file is
- * not a type this app accepts.
+ * not a type this app accepts or when the extension and MIME type conflict.
  *
  * Returning null (instead of guessing a default such as 'pdf') is deliberate:
  * document_type is NOT NULL, and writing a value that mislabels the file would
@@ -845,30 +889,49 @@ export function validateDocumentFile(file: File): string | null {
  */
 export function resolveDocumentType(file: File): DocumentType | null {
   const name = file.name.toLowerCase();
-  const ext = name.slice(name.lastIndexOf('.'));
+  const dotIndex = name.lastIndexOf('.');
+  const ext = dotIndex >= 0 ? name.slice(dotIndex) : '';
   const mime = file.type.toLowerCase();
 
-  // Extension wins first: it is what the user actually named the file, and it
-  // is the signal the accept-filter in the UI is built on.
-  if (ext === '.pdf') return 'pdf';
-  if (ext === '.jpg' || ext === '.jpeg') return 'jpg';
-  if (ext === '.png') return 'png';
+  let extType: DocumentType | null = null;
+  if (ext === '.pdf') extType = 'pdf';
+  else if (ext === '.jpg' || ext === '.jpeg') extType = 'jpg';
+  else if (ext === '.png') extType = 'png';
 
-  // Fall back to the MIME header for files whose name carries no usable
-  // extension (some browsers and OS pickers report one).
-  if (mime === 'application/pdf') return 'pdf';
-  if (mime === 'image/jpeg' || mime === 'image/jpg') return 'jpg';
-  if (mime === 'image/png') return 'png';
+  let mimeType: DocumentType | null = null;
+  if (mime === 'application/pdf') mimeType = 'pdf';
+  else if (mime === 'image/jpeg' || mime === 'image/jpg') mimeType = 'jpg';
+  else if (mime === 'image/png') mimeType = 'png';
+  else if (mime !== '') {
+    // Non-empty unrecognized MIME type must never be accepted even if the filename ends in .pdf/.jpg/.png
+    return null;
+  }
 
-  return null;
+  if (extType && mimeType && extType !== mimeType) {
+    return null;
+  }
+
+  return extType ?? mimeType;
 }
 
 function sanitizeDocumentName(name: string): string {
-  const cleaned = name
+  const baseName = (name.split(/[/\\]/).pop() ?? name).trim();
+  const dotIndex = baseName.lastIndexOf('.');
+  const rawExt = dotIndex > 0 ? baseName.slice(dotIndex).toLowerCase() : '';
+  const ext = (ALLOWED_DOCUMENT_EXTENSIONS as readonly string[]).includes(rawExt) ? rawExt : '';
+  const rawStem = ext ? baseName.slice(0, dotIndex) : baseName;
+
+  const maxStemLength = Math.max(1, 60 - ext.length);
+  const cleanedStem = rawStem
     .replace(/[^a-zA-Z0-9.\-_]+/g, '_')
+    .replace(/\.{2,}/g, '_')
     .replace(/_+/g, '_')
-    .slice(0, 60);
-  return cleaned.replace(/[.\-_]+$/g, '');
+    .replace(/^[.\-_]+|[.\-_]+$/g, '')
+    .slice(0, maxStemLength)
+    .replace(/[.\-_]+$/g, '');
+
+  const safeStem = cleanedStem || 'document';
+  return `${safeStem}${ext}`;
 }
 
 /**
@@ -878,6 +941,9 @@ function sanitizeDocumentName(name: string): string {
  * free-form user input.
  */
 export function buildDocumentStoragePath(userId: string, requestId: string, file: File): string {
+  if (!SAFE_STORAGE_ID_SEGMENT.test(userId) || !SAFE_STORAGE_ID_SEGMENT.test(requestId)) {
+    throw new Error('Invalid user or request identifier for document storage path.');
+  }
   return `${userId}/${requestId}/${crypto.randomUUID()}-${sanitizeDocumentName(file.name)}`;
 }
 
@@ -969,20 +1035,29 @@ export async function uploadHelpRequestDocument(params: {
   if (!userId) {
     return {
       data: null,
-      error: { source: 'storage-upload', message: NOT_SIGNED_IN.message },
+      error: { source: 'storage-upload', message: NOT_SIGNED_IN.message, code: NOT_SIGNED_IN.code },
     };
   }
 
-  // Resolve document_type BEFORE touching Storage. The column is NOT NULL with
-  // no default, and uploading first would leave an orphaned object to clean up
-  // for a failure that is purely client-side and fully preventable.
-  const documentType = resolveDocumentType(file);
-  if (!documentType) {
+  if (!SAFE_STORAGE_ID_SEGMENT.test(requestId) || !SAFE_STORAGE_ID_SEGMENT.test(userId)) {
     return {
       data: null,
       error: {
         source: 'storage-upload',
-        message: 'Only PDF, JPG, or PNG files are allowed.',
+        message: 'A valid request reference is required before uploading documents.',
+      },
+    };
+  }
+
+  // Validate file extension, MIME consistency, non-zero size, and <= 5 MB BEFORE touching Storage.
+  const validationMessage = validateDocumentFile(file);
+  const documentType = resolveDocumentType(file);
+  if (validationMessage || !documentType) {
+    return {
+      data: null,
+      error: {
+        source: 'storage-upload',
+        message: validationMessage ?? 'Only PDF, JPG, or PNG files are allowed.',
       },
     };
   }
@@ -990,11 +1065,13 @@ export async function uploadHelpRequestDocument(params: {
   // {userId}/{requestId}/{uuid}-{filename}: owner-scoped, request-scoped, and
   // collision-free, so two requesters can never address each other's objects.
   const storagePath = buildDocumentStoragePath(userId, requestId, file);
+  const canonicalContentType = CANONICAL_MIME_BY_DOC_TYPE[documentType];
 
   const upload = await uploadObjectToPrivateBucket({
     bucket: DOCUMENT_BUCKET,
     path: storagePath,
     file,
+    contentType: canonicalContentType,
     onProgress,
   });
 
@@ -1120,15 +1197,16 @@ async function uploadObjectToPrivateBucket(params: {
   bucket: string;
   path: string;
   file: File;
+  contentType: string;
   onProgress?: (percent: number) => void;
 }): Promise<{ error: unknown | null }> {
-  const { bucket, path, file, onProgress } = params;
+  const { bucket, path, file, contentType, onProgress } = params;
 
   const useXhr = typeof XMLHttpRequest !== 'undefined' && Boolean(SUPABASE_URL);
   if (!useXhr) {
     const { error } = await supabase.storage
       .from(bucket)
-      .upload(path, file, { contentType: file.type, upsert: false });
+      .upload(path, file, { contentType, upsert: false });
     onProgress?.(100);
     return { error };
   }
@@ -1140,14 +1218,15 @@ async function uploadObjectToPrivateBucket(params: {
 
   return new Promise<{ error: unknown | null }>((resolve) => {
     const xhr = new XMLHttpRequest();
-    const url = `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}?upsert=false`;
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+    const url = `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(bucket)}/${encodedPath}?upsert=false`;
 
     xhr.open('POST', url, true);
     xhr.setRequestHeader('authorization', `Bearer ${sessionData.session.access_token}`);
     if (SUPABASE_PUBLISHABLE_KEY) {
       xhr.setRequestHeader('apikey', SUPABASE_PUBLISHABLE_KEY);
     }
-    xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
+    xhr.setRequestHeader('content-type', contentType);
     xhr.setRequestHeader('x-upsert', 'false');
 
     xhr.upload.onprogress = (event) => {
@@ -1203,6 +1282,40 @@ export async function removeHelpRequestDocument(params: {
   storagePath: string;
 }): Promise<{ ok: boolean; error: HelpRequestServiceError | null }> {
   const { requestId, storagePath } = params;
+
+  const parsedPath = parseValidatedDocumentPath(storagePath);
+  if (!parsedPath || !SAFE_STORAGE_ID_SEGMENT.test(requestId)) {
+    return {
+      ok: false,
+      error: {
+        source: 'storage-remove',
+        message: 'That document reference is not valid.',
+      },
+    };
+  }
+
+  const userId = await getCurrentUserId();
+  if (!userId) {
+    return {
+      ok: false,
+      error: {
+        source: 'storage-remove',
+        message: NOT_SIGNED_IN.message,
+        code: NOT_SIGNED_IN.code,
+      },
+    };
+  }
+
+  if (parsedPath.userId !== userId || parsedPath.requestId !== requestId) {
+    return {
+      ok: false,
+      error: {
+        source: 'storage-remove',
+        message: 'You are not authorized to remove this document.',
+        code: '42501',
+      },
+    };
+  }
 
   const { error: storageError } = await supabase.storage
     .from(DOCUMENT_BUCKET)
@@ -1263,10 +1376,34 @@ export async function removeHelpRequestDocument(params: {
 export async function createRequesterDocumentUrl(
   storagePath: string,
 ): Promise<{ data: { signedUrl: string } | null; error: HelpRequestServiceError | null }> {
-  if (!storagePath) {
+  const parsedPath = parseValidatedDocumentPath(storagePath);
+  if (!parsedPath) {
     return {
       data: null,
       error: { source: 'document-url', message: 'That document reference is not valid.' },
+    };
+  }
+
+  const userId = await getCurrentUserId();
+  if (!userId) {
+    return {
+      data: null,
+      error: {
+        source: 'document-url',
+        message: NOT_SIGNED_IN.message,
+        code: NOT_SIGNED_IN.code,
+      },
+    };
+  }
+
+  if (parsedPath.userId !== userId) {
+    return {
+      data: null,
+      error: {
+        source: 'document-url',
+        message: 'You are not authorized to open this document.',
+        code: '42501',
+      },
     };
   }
 

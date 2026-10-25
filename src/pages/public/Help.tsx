@@ -15,6 +15,7 @@ import {
 import { LinkButton } from '../../components/ui/Button';
 import { ErrorState } from '../../components/ui/Card';
 import { ProgressBar } from '../../components/ui/ProgressBar';
+import { CategoryCoverPlaceholder } from '../../components/ui/CategoryPlaceholder';
 import {
   getCategories,
   getPublicHelpRequestsPage,
@@ -535,18 +536,28 @@ export default function Help() {
                       className="py-6 sm:py-8 flex flex-col md:flex-row md:items-start md:justify-between gap-6 transition-colors hover:bg-canvas/40"
                     >
                       <div className="flex flex-col sm:flex-row gap-5 min-w-0 flex-1">
-                        {r.imageUrl && (
-                          <div className="w-full sm:w-44 sm:h-32 shrink-0 overflow-hidden rounded-md border border-line bg-canvas">
+                        <div className="w-full sm:w-44 sm:h-32 shrink-0 overflow-hidden rounded-md border border-line bg-canvas">
+                          {r.imageUrl ? (
                             <img
                               src={r.imageUrl}
                               alt={r.title}
                               className="h-44 sm:h-full w-full object-cover"
                               loading="lazy"
                             />
-                          </div>
-                        )}
+                          ) : (
+                            <CategoryCoverPlaceholder categoryName={catName} size="md" />
+                          )}
+                        </div>
                         <div className="min-w-0 flex-1 space-y-2">
                           <div className="flex flex-wrap items-center gap-2 text-xs text-ink-subtle">
+                            {r.isDemo && (
+                              <>
+                                <span className="inline-flex items-center font-medium text-slate-700 text-[10px] bg-slate-100 px-2 py-0.5 rounded-control border border-slate-300 shadow-2xs">
+                                  Sample
+                                </span>
+                                <span>·</span>
+                              </>
+                            )}
                             {catName && <span className="font-semibold text-primary">{catName}</span>}
                             {catName && loc && <span>·</span>}
                             {loc && (

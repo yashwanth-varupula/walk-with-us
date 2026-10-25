@@ -29,6 +29,7 @@ import {
   rupeesToPaise,
   formatPaiseToINR,
 } from '../lib/money';
+import { getRequestCoverImageUrl } from './helpRequests';
 import type {
   PaymentStatus,
   PaymentProvider,
@@ -42,6 +43,12 @@ import type {
   VerifyPaymentResult,
   RazorpayOrderData,
   RazorpayPaymentResponse,
+  UserDonationRecord,
+  DonationSummaryStats,
+  MyDonationsFilterStatus,
+  GetMyDonationsParams,
+  GetMyDonationsResponse,
+  DonationReceiptData,
 } from '../types/donations';
 
 export type {
@@ -57,6 +64,12 @@ export type {
   VerifyPaymentResult,
   RazorpayOrderData,
   RazorpayPaymentResponse,
+  UserDonationRecord,
+  DonationSummaryStats,
+  MyDonationsFilterStatus,
+  GetMyDonationsParams,
+  GetMyDonationsResponse,
+  DonationReceiptData,
 };
 
 export {
@@ -236,12 +249,20 @@ export async function createDonationIntent(
 
   // 4. Invoke secure server-side Edge Function
   try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    const authHeaders: Record<string, string> = {};
+    if (token) {
+      authHeaders['Authorization'] = `Bearer ${token}`;
+    }
+
     const { data, error } = await supabase.functions.invoke('create-razorpay-order', {
       body: {
         requestId: intent.requestId || null,
         amountPaise,
         donorDetails: donorDetails || {},
       },
+      headers: Object.keys(authHeaders).length > 0 ? authHeaders : undefined,
     });
 
     if (error) {
@@ -302,8 +323,16 @@ export async function verifyRazorpayPayment(
   params: VerifyPaymentInput,
 ): Promise<VerifyPaymentResult> {
   try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    const authHeaders: Record<string, string> = {};
+    if (token) {
+      authHeaders['Authorization'] = `Bearer ${token}`;
+    }
+
     const { data, error } = await supabase.functions.invoke('verify-razorpay-payment', {
       body: params,
+      headers: Object.keys(authHeaders).length > 0 ? authHeaders : undefined,
     });
 
     if (error) {
@@ -334,6 +363,90 @@ export async function verifyRazorpayPayment(
       error: 'internal_error',
       message: (err as Error).message || 'Unexpected payment verification error.',
     };
+  }
+}
+
+export interface ReconcileDonationResult {
+  ok: boolean;
+  reconciled?: Array<{
+    donationId: string;
+    providerOrderId?: string;
+    previousStatus: string;
+    currentStatus: string;
+    action: string;
+    failureReason?: string | null;
+  }>;
+  message?: string;
+  error?: string;
+}
+
+/**
+ * Reconciles a specific donation or abandoned intent with the Razorpay payment gateway.
+ * Never marks a donation paid from client assertions alone; contacts the gateway via Edge Function.
+ */
+export async function reconcileDonation(
+  donationId: string,
+  options: { userAction?: 'cancelled' } = {},
+): Promise<ReconcileDonationResult> {
+  if (!donationId) return { ok: false, error: 'Donation ID is required.' };
+
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    const authHeaders: Record<string, string> = {};
+    if (token) {
+      authHeaders['Authorization'] = `Bearer ${token}`;
+    }
+
+    const { data, error } = await supabase.functions.invoke('reconcile-donation', {
+      body: {
+        donationId,
+        userAction: options.userAction,
+      },
+      headers: Object.keys(authHeaders).length > 0 ? authHeaders : undefined,
+    });
+
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+
+    return {
+      ok: Boolean(data?.ok),
+      reconciled: data?.reconciled || [],
+      message: data?.message,
+    };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
+/**
+ * Reconciles all pending donations for the currently authenticated user against Razorpay.
+ */
+export async function reconcileUserPendingDonations(): Promise<ReconcileDonationResult> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (!token) {
+      return { ok: false, error: 'User must be signed in to reconcile donations.' };
+    }
+
+    const { data, error } = await supabase.functions.invoke('reconcile-donation', {
+      body: { reconcileAllPending: true },
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+
+    return {
+      ok: Boolean(data?.ok),
+      reconciled: data?.reconciled || [],
+      message: data?.message,
+    };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
   }
 }
 
@@ -372,5 +485,439 @@ export async function getPublicDonationsForRequest(
     return { data: items, error: null };
   } catch (err) {
     return { data: [], error: (err as Error).message };
+  }
+}
+
+/**
+ * Computes exact financial statistics derived strictly from real donation records.
+ *
+ * ACCOUNTING RULES:
+ * - Successful donations: status is 'paid'.
+ * - Non-successful donations: 'created', 'pending', 'failed', 'cancelled' NEVER count.
+ * - Net contribution: For 'paid', amountPaise.
+ * - Full refunds: For 'refunded', entire amount is counted as refunded; does NOT add to successful totals.
+ * - Current calendar month: Filtered by paidAt (or createdAt) falling within the current calendar month.
+ * - Distinct campaigns: Count of unique campaign IDs among successful contributions (plus general fund if applicable).
+ */
+export function calculateDonationStats(
+  records: Array<{
+    status: PaymentStatus;
+    amountPaise: number;
+    requestId: string | null;
+    createdAt: string;
+    paidAt: string | null;
+  }>,
+): DonationSummaryStats {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+
+  let totalDonatedPaise = 0;
+  let successfulCount = 0;
+  let currentMonthDonatedPaise = 0;
+  let totalRefundedPaise = 0;
+  const distinctCampaignIds = new Set<string>();
+
+  for (const record of records) {
+    if (record.status === 'paid') {
+      successfulCount += 1;
+      totalDonatedPaise += record.amountPaise;
+
+      // Track distinct campaign
+      if (record.requestId) {
+        distinctCampaignIds.add(record.requestId);
+      } else {
+        distinctCampaignIds.add('general_fund');
+      }
+
+      // Check current calendar month
+      const donationDate = record.paidAt ? new Date(record.paidAt) : new Date(record.createdAt);
+      if (
+        !isNaN(donationDate.getTime()) &&
+        donationDate.getFullYear() === currentYear &&
+        donationDate.getMonth() === currentMonth
+      ) {
+        currentMonthDonatedPaise += record.amountPaise;
+      }
+    } else if (record.status === 'refunded') {
+      totalRefundedPaise += record.amountPaise;
+    }
+  }
+
+  return {
+    totalDonatedPaise,
+    successfulCount,
+    distinctCampaignsCount: distinctCampaignIds.size,
+    currentMonthDonatedPaise,
+    totalRefundedPaise,
+    hasRefunds: totalRefundedPaise > 0,
+  };
+}
+
+/**
+ * Fetch authenticated user's own donations from the database with pagination, filters, and statistics.
+ * Ownership is verified by Supabase session and strictly enforced by Postgres RLS (user_id = auth.uid()).
+ */
+export async function getMyDonations(
+  params: GetMyDonationsParams = {},
+): Promise<GetMyDonationsResponse> {
+  const {
+    status = 'all',
+    searchQuery = '',
+    startDate = null,
+    endDate = null,
+    page = 1,
+    pageSize = 10,
+  } = params;
+
+  const emptyResponse: GetMyDonationsResponse = {
+    donations: [],
+    totalCount: 0,
+    page,
+    pageSize,
+    totalPages: 0,
+    stats: {
+      totalDonatedPaise: 0,
+      successfulCount: 0,
+      distinctCampaignsCount: 0,
+      currentMonthDonatedPaise: 0,
+      totalRefundedPaise: 0,
+      hasRefunds: false,
+    },
+    error: null,
+  };
+
+  try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !sessionData.session?.user) {
+      return {
+        ...emptyResponse,
+        error: 'You must be signed in to view your donation history.',
+      };
+    }
+
+    const currentUserId = sessionData.session.user.id;
+
+    // 1. Fetch all user records (lightweight) to compute overall lifetime stats
+    // Postgres RLS automatically enforces user_id = auth.uid()
+    const { data: allUserRecords, error: statsError } = await supabase
+      .from('donations')
+      .select('status, amount_paise, request_id, created_at, paid_at')
+      .eq('user_id', currentUserId);
+
+    if (statsError) {
+      console.error('[getMyDonations] Error loading donation stats:', statsError);
+      return {
+        ...emptyResponse,
+        error: statsError.message || 'Unable to retrieve donation statistics.',
+      };
+    }
+
+    const mappedStatsRecords = (allUserRecords || []).map((r) => ({
+      status: r.status as PaymentStatus,
+      amountPaise: Number(r.amount_paise),
+      requestId: r.request_id ? String(r.request_id) : null,
+      createdAt: String(r.created_at),
+      paidAt: r.paid_at ? String(r.paid_at) : null,
+    }));
+
+    const stats = calculateDonationStats(mappedStatsRecords);
+
+    // 2. Build filtered and paginated query
+    let query = supabase
+      .from('donations')
+      .select('*, help_requests:request_id(id, title, image_path, status)', { count: 'exact' })
+      .eq('user_id', currentUserId);
+
+    // Status filter
+    if (status === 'paid') {
+      query = query.eq('status', 'paid');
+    } else if (status === 'pending') {
+      query = query.in('status', ['pending', 'created']);
+    } else if (status === 'failed') {
+      query = query.eq('status', 'failed');
+    } else if (status === 'cancelled') {
+      query = query.eq('status', 'cancelled');
+    } else if (status === 'refunded') {
+      query = query.eq('status', 'refunded');
+    }
+
+    // Date range filter
+    if (startDate) {
+      query = query.gte('created_at', startDate);
+    }
+    if (endDate) {
+      query = query.lte('created_at', endDate);
+    }
+
+    query = query.order('created_at', { ascending: false });
+
+    // Range for pagination
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    query = query.range(from, to);
+
+    const { data, count, error: fetchError } = await query;
+
+    if (fetchError) {
+      console.error('[getMyDonations] Error fetching donation history:', fetchError);
+      return {
+        ...emptyResponse,
+        stats,
+        error: fetchError.message || 'Failed to retrieve donation history.',
+      };
+    }
+
+    const totalCount = count ?? 0;
+    const totalPages = Math.ceil(totalCount / pageSize);
+
+    const donations: UserDonationRecord[] = (data || []).map((row) => {
+      const amountPaise = Number(row.amount_paise);
+
+      const helpReq = row.help_requests as {
+        id?: string;
+        title?: string;
+        image_path?: string;
+        status?: string;
+      } | null;
+
+      return {
+        id: String(row.id),
+        requestId: row.request_id ? String(row.request_id) : null,
+        userId: row.user_id ? String(row.user_id) : null,
+        donorName: row.donor_name ? String(row.donor_name) : null,
+        donorEmail: row.donor_email ? String(row.donor_email) : null,
+        donorPhone: row.donor_phone ? String(row.donor_phone) : null,
+        isAnonymous: Boolean(row.is_anonymous),
+        amountPaise,
+        currency: 'INR',
+        paymentProvider: row.payment_provider || null,
+        providerOrderId: row.provider_order_id ? String(row.provider_order_id) : null,
+        providerPaymentId: row.provider_payment_id ? String(row.provider_payment_id) : null,
+        providerSignature: row.provider_signature ? String(row.provider_signature) : null,
+        idempotencyKey: row.idempotency_key ? String(row.idempotency_key) : null,
+        status: row.status as PaymentStatus,
+        paidAt: row.paid_at ? String(row.paid_at) : null,
+        refundedAt: row.refunded_at ? String(row.refunded_at) : null,
+        failureReason: row.failure_reason ? String(row.failure_reason) : null,
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+        campaignTitle:
+          helpReq?.title || (row.request_id ? 'Community Campaign' : 'General Community Fund'),
+        campaignCoverImageUrl: getRequestCoverImageUrl(helpReq?.image_path),
+        campaignStatus: helpReq?.status || null,
+      };
+    });
+
+    // In-memory search filter across campaign title, donation ID, and payment IDs
+    let filteredDonations = donations;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      filteredDonations = donations.filter(
+        (d) =>
+          (d.campaignTitle && d.campaignTitle.toLowerCase().includes(q)) ||
+          (d.providerPaymentId && d.providerPaymentId.toLowerCase().includes(q)) ||
+          (d.providerOrderId && d.providerOrderId.toLowerCase().includes(q)) ||
+          d.id.toLowerCase().includes(q),
+      );
+    }
+
+    return {
+      donations: filteredDonations,
+      totalCount,
+      page,
+      pageSize,
+      totalPages,
+      stats,
+      error: null,
+    };
+  } catch (err) {
+    console.error('[getMyDonations] Unexpected failure:', err);
+    return {
+      ...emptyResponse,
+      error: (err as Error).message || 'Unexpected failure loading donations.',
+    };
+  }
+}
+
+/**
+ * Fetch a single donation by ID, strictly verifying ownership through RLS.
+ */
+export async function getMyDonationById(
+  id: string,
+): Promise<{ data: UserDonationRecord | null; error: string | null }> {
+  if (!id) return { data: null, error: 'Donation ID is required.' };
+
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session?.user) {
+      return { data: null, error: 'You must be signed in to view this donation.' };
+    }
+
+    const { data, error } = await supabase
+      .from('donations')
+      .select('*, help_requests:request_id(id, title, image_path, status)')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    if (!data) {
+      return { data: null, error: 'Donation record not found.' };
+    }
+
+    const amountPaise = Number(data.amount_paise);
+
+    const helpReq = data.help_requests as {
+      id?: string;
+      title?: string;
+      image_path?: string;
+      status?: string;
+    } | null;
+
+    const record: UserDonationRecord = {
+      id: String(data.id),
+      requestId: data.request_id ? String(data.request_id) : null,
+      userId: data.user_id ? String(data.user_id) : null,
+      donorName: data.donor_name ? String(data.donor_name) : null,
+      donorEmail: data.donor_email ? String(data.donor_email) : null,
+      donorPhone: data.donor_phone ? String(data.donor_phone) : null,
+      isAnonymous: Boolean(data.is_anonymous),
+      amountPaise,
+      currency: 'INR',
+      paymentProvider: data.payment_provider || null,
+      providerOrderId: data.provider_order_id ? String(data.provider_order_id) : null,
+      providerPaymentId: data.provider_payment_id ? String(data.provider_payment_id) : null,
+      providerSignature: data.provider_signature ? String(data.provider_signature) : null,
+      idempotencyKey: data.idempotency_key ? String(data.idempotency_key) : null,
+      status: data.status as PaymentStatus,
+      paidAt: data.paid_at ? String(data.paid_at) : null,
+      refundedAt: data.refunded_at ? String(data.refunded_at) : null,
+      failureReason: data.failure_reason ? String(data.failure_reason) : null,
+      createdAt: String(data.created_at),
+      updatedAt: String(data.updated_at),
+      campaignTitle:
+        helpReq?.title || (data.request_id ? 'Community Campaign' : 'General Community Fund'),
+      campaignCoverImageUrl: getRequestCoverImageUrl(helpReq?.image_path),
+      campaignStatus: helpReq?.status || null,
+    };
+
+    return { data: record, error: null };
+  } catch (err) {
+    return { data: null, error: (err as Error).message };
+  }
+}
+
+/**
+ * Derives a formal donation receipt only when the underlying payment data supports it.
+ * Never fabricates a successful payment receipt for pending or failed payments.
+ * Does not make false claims of 80G tax deductibility.
+ */
+export function getDonationReceiptData(
+  donation: UserDonationRecord,
+): DonationReceiptData | null {
+  if (donation.status !== 'paid') {
+    return null;
+  }
+
+  const shortId = donation.id.replace(/-/g, '').slice(0, 8).toUpperCase();
+  const dateStr = (donation.paidAt || donation.createdAt).slice(0, 10).replace(/-/g, '');
+
+  return {
+    receiptNumber: `WWU-${dateStr}-${shortId}`,
+    donationId: donation.id,
+    transactionReference: donation.providerPaymentId || donation.providerOrderId || donation.id,
+    paymentProvider: donation.paymentProvider ? donation.paymentProvider.toUpperCase() : 'RAZORPAY',
+    amountPaise: donation.amountPaise,
+    currency: 'INR',
+    status: donation.status,
+    donationDate: donation.paidAt || donation.createdAt,
+    donorName: donation.isAnonymous
+      ? 'Anonymous Supporter'
+      : donation.donorName || 'Community Supporter',
+    isAnonymous: donation.isAnonymous,
+    campaignTitle: donation.campaignTitle || 'General Community Fund',
+    campaignId: donation.requestId,
+    isTaxDeductible: false,
+  };
+}
+
+/**
+ * Fetch staff-authorized donation records for monitoring and audit.
+ */
+export async function listStaffDonations(params: {
+  status?: PaymentStatus;
+  page?: number;
+  pageSize?: number;
+} = {}): Promise<{
+  donations: UserDonationRecord[];
+  totalCount: number;
+  error: string | null;
+}> {
+  const { status, page = 1, pageSize = 20 } = params;
+
+  try {
+    let query = supabase
+      .from('donations')
+      .select('*, help_requests:request_id(id, title, image_path, status)', { count: 'exact' });
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    query = query.order('created_at', { ascending: false });
+
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    query = query.range(from, to);
+
+    const { data, count, error } = await query;
+    if (error) {
+      return { donations: [], totalCount: 0, error: error.message };
+    }
+
+    const donations: UserDonationRecord[] = (data || []).map((row) => {
+      const amountPaise = Number(row.amount_paise);
+
+      const helpReq = row.help_requests as {
+        id?: string;
+        title?: string;
+        image_path?: string;
+        status?: string;
+      } | null;
+
+      return {
+        id: String(row.id),
+        requestId: row.request_id ? String(row.request_id) : null,
+        userId: row.user_id ? String(row.user_id) : null,
+        donorName: row.donor_name ? String(row.donor_name) : null,
+        donorEmail: row.donor_email ? String(row.donor_email) : null,
+        donorPhone: row.donor_phone ? String(row.donor_phone) : null,
+        isAnonymous: Boolean(row.is_anonymous),
+        amountPaise,
+        currency: 'INR',
+        paymentProvider: row.payment_provider || null,
+        providerOrderId: row.provider_order_id ? String(row.provider_order_id) : null,
+        providerPaymentId: row.provider_payment_id ? String(row.provider_payment_id) : null,
+        providerSignature: row.provider_signature ? String(row.provider_signature) : null,
+        idempotencyKey: row.idempotency_key ? String(row.idempotency_key) : null,
+        status: row.status as PaymentStatus,
+        paidAt: row.paid_at ? String(row.paid_at) : null,
+        refundedAt: row.refunded_at ? String(row.refunded_at) : null,
+        failureReason: row.failure_reason ? String(row.failure_reason) : null,
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+        campaignTitle:
+          helpReq?.title || (row.request_id ? 'Community Campaign' : 'General Community Fund'),
+        campaignCoverImageUrl: getRequestCoverImageUrl(helpReq?.image_path),
+        campaignStatus: helpReq?.status || null,
+      };
+    });
+
+    return { donations, totalCount: count ?? 0, error: null };
+  } catch (err) {
+    return { donations: [], totalCount: 0, error: (err as Error).message };
   }
 }

@@ -18,7 +18,9 @@ import {
 } from '../../services/helpRequests';
 import { LinkButton } from '../../components/ui/Button';
 import { ShareModal } from '../../components/ui/ShareModal';
+import { CategoryCoverPlaceholder } from '../../components/ui/CategoryPlaceholder';
 import { DonationPanel } from '../../components/donation/DonationPanel';
+import { SupporterWall } from '../../components/donation/SupporterWall';
 import { formatDate, formatINR, formatLocation, fundingPercent } from '../../lib/format';
 import { urgencyMeta } from '../../lib/status';
 import { CONTACT_EMAIL } from '../../lib/siteConfig';
@@ -32,6 +34,14 @@ export default function HelpDetails() {
   const [notFound, setNotFound] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [shareOpen, setShareOpen] = useState(false);
+  const [supporterRefreshKey, setSupporterRefreshKey] = useState(0);
+
+  const handleDonationSuccess = useCallback(() => {
+    // 1. Refresh supporter wall to show newly confirmed donation
+    setSupporterRefreshKey((k) => k + 1);
+    // 2. Refresh request details so raised_amount and progress bar update
+    setAttempt((a) => a + 1);
+  }, []);
 
   /* ------------------------------------------------------------- data fetch */
 
@@ -244,6 +254,11 @@ export default function HelpDetails() {
           </h1>
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-subtle">
+            {request.isDemo && (
+              <span className="inline-flex items-center font-medium text-slate-700 text-[10px] bg-slate-100 px-2 py-0.5 rounded-control border border-slate-300 shadow-2xs">
+                Sample Scenario
+              </span>
+            )}
             <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
               Staff-reviewed request
@@ -263,15 +278,19 @@ export default function HelpDetails() {
           <main className="space-y-8 lg:col-span-7">
             {/* The Story */}
             <article>
-              {request.imageUrl && (
-                <div className="mb-6 overflow-hidden rounded-card border border-line bg-canvas">
+              <div className="mb-6 overflow-hidden rounded-card border border-line bg-canvas">
+                {request.imageUrl ? (
                   <img
                     src={request.imageUrl}
                     alt={request.title}
                     className="aspect-video w-full object-cover"
                   />
-                </div>
-              )}
+                ) : (
+                  <div className="aspect-[16/9] w-full">
+                    <CategoryCoverPlaceholder categoryName={categoryName} size="lg" />
+                  </div>
+                )}
+              </div>
               <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-subtle">
                 About this Request
               </h2>
@@ -281,7 +300,7 @@ export default function HelpDetails() {
             </article>
 
             {/* Mobile In-Flow Funding & Donation Section */}
-            <div className="border-t border-line pt-6 lg:hidden">
+            <div id="donation-section" className="border-t border-line pt-6 lg:hidden">
               {hasTarget ? (
                 <div className="space-y-4">
                   <DonationPanel
@@ -292,6 +311,7 @@ export default function HelpDetails() {
                     isFullyFunded={isFullyFunded}
                     hasTarget={hasTarget}
                     onShareClick={() => void handleShare()}
+                    onDonationSuccess={handleDonationSuccess}
                   />
                   <button
                     type="button"
@@ -361,6 +381,15 @@ export default function HelpDetails() {
               </dl>
             </section>
 
+            {/* Public Supporter Wall */}
+            <div className="border-t border-line pt-8">
+              <SupporterWall
+                requestId={request.id}
+                hasTarget={hasTarget}
+                refreshTrigger={supporterRefreshKey}
+              />
+            </div>
+
             {/* Factual Trust & Transparency Reassurance */}
             <section className="border-t border-line pt-8 space-y-2">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-subtle">
@@ -394,6 +423,7 @@ export default function HelpDetails() {
                 isFullyFunded={isFullyFunded}
                 hasTarget={hasTarget}
                 onShareClick={() => void handleShare()}
+                onDonationSuccess={handleDonationSuccess}
               />
             ) : (
               <div className="border border-line bg-surface p-6 sm:p-7 rounded-control space-y-4">

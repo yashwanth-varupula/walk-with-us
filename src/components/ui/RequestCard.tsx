@@ -33,8 +33,8 @@ export default function RequestCard({ request, categoryName }: RequestCardProps)
   const urgency = urgencyMeta(request.urgency);
 
   return (
-    <article className="group p-4 sm:p-5 transition-colors hover:bg-slate-50/60">
-      <div className="flex flex-col gap-2.5">
+    <article className="group rounded-card border border-line bg-surface p-5 sm:p-6 shadow-xs hover:shadow-md hover:border-slate-300 transition-all duration-200">
+      <div className="flex flex-col gap-3">
         {/* 1. Status & Metadata Line */}
         <div className="flex flex-wrap items-center justify-between gap-y-1.5 gap-x-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">

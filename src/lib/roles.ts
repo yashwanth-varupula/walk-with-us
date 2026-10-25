@@ -25,6 +25,13 @@ export type UserRole = (typeof USER_ROLES)[number];
 /** Roles permitted into the staff console. Everything else is denied. */
 export const STAFF_ROLES: readonly UserRole[] = ['staff', 'admin'];
 
+/** Roles permitted into administrative controls. Everything else is denied. */
+export const ADMIN_ROLES: readonly UserRole[] = ['admin'];
+
 export function isUserRole(value: unknown): value is UserRole {
   return typeof value === 'string' && (USER_ROLES as readonly string[]).includes(value);
+}
+
+export function isAdminRole(role: UserRole | null): boolean {
+  return role === 'admin';
 }

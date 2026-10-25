@@ -1,7 +1,9 @@
-import { HeartHandshake, LogIn, LogOut, ShieldCheck, UserPlus } from 'lucide-react';
+import { LogIn, LogOut, Mail, Phone, ShieldCheck, UserPlus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useIsStaff } from '../../hooks/useRole';
+import { CONTACT_EMAIL, CONTACT_PHONE, CONTACT_PHONE_DISPLAY } from '../../lib/siteConfig';
+import logoImg from '../../assets/logo.jpg';
 
 const linkClass =
   'rounded-sm text-sm text-ink-muted transition-colors hover:text-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-primary';
@@ -15,24 +17,55 @@ export default function Footer() {
       <div className="container-page py-10 sm:py-14">
         <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
           {/* Brand & Mission */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 space-y-4">
             <Link
               to="/"
-              className="inline-flex items-center gap-2.5 rounded-control text-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-primary"
+              className="inline-flex items-center gap-3 rounded-control text-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-primary"
             >
-              <div className="flex h-9 w-9 items-center justify-center rounded-control bg-primary text-white shadow-xs">
-                <HeartHandshake className="h-5 w-5" aria-hidden="true" />
+              <img
+                src={logoImg}
+                alt="Walk With Us Logo"
+                className="h-10 w-10 shrink-0 rounded-lg object-contain shadow-xs"
+              />
+              <div>
+                <span className="block text-lg font-extrabold tracking-tight text-ink leading-tight">
+                  Walk With Us
+                </span>
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+                  Help Humanity Serve
+                </span>
               </div>
-              <span className="text-lg font-bold tracking-tight text-ink">Walk With Us</span>
             </Link>
 
-            <p className="mt-3 max-w-sm text-sm leading-relaxed text-ink-muted">
+            <p className="max-w-sm text-sm leading-relaxed text-ink-muted">
               A trusted humanitarian community platform connecting people facing hardship with
               caring individuals ready to support through verified donations, volunteering, and
               partnerships.
             </p>
 
-            <div className="mt-4 flex items-center gap-2 rounded-control bg-primary-soft/60 px-3 py-2 text-xs font-medium text-primary-strong max-w-xs border border-primary-soft-strong/50">
+            {/* Direct Contact Details */}
+            <div className="space-y-1.5 text-xs text-ink-muted pt-1">
+              <div className="flex items-center gap-2">
+                <Mail className="h-3.5 w-3.5 text-primary shrink-0" aria-hidden="true" />
+                <a
+                  href={`mailto:${CONTACT_EMAIL}`}
+                  className="font-medium hover:text-primary transition-colors"
+                >
+                  {CONTACT_EMAIL}
+                </a>
+              </div>
+              <div className="flex items-center gap-2">
+                <Phone className="h-3.5 w-3.5 text-primary shrink-0" aria-hidden="true" />
+                <a
+                  href={`tel:${CONTACT_PHONE}`}
+                  className="font-medium hover:text-primary transition-colors"
+                >
+                  {CONTACT_PHONE_DISPLAY}
+                </a>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 rounded-control bg-primary-soft/60 px-3 py-2 text-xs font-medium text-primary-strong max-w-xs border border-primary-soft-strong/50">
               <ShieldCheck className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
               <span>Every published request is reviewed and verified by staff.</span>
             </div>
@@ -89,6 +122,11 @@ export default function Footer() {
                   <li>
                     <Link to="/my-requests" className={linkClass}>
                       Track My Requests
+                    </Link>
+                  </li>
+                  <li>
+                    <Link to="/my-donations" className={linkClass}>
+                      My Donations
                     </Link>
                   </li>
                   <li>
